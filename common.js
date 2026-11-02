@@ -32,6 +32,16 @@ function tipCalc(c, a) {   // a: [{id, a}]
   return { correct: c, rows, winners: rows.filter(x => x.diff === m).map(x => x.id) };
 }
 
+const mediaUrl = u => /^https?:/i.test(u) ? u : new URL(u, location.href).href;   // relativní cesta = soubor ve stejném repozitáři/hostingu
+function checkMedia(kind, u) {
+  let note; const gh = u.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/(.+)$/i);
+  if (gh) { u = `https://raw.githubusercontent.com/${gh[1]}/${gh[2]}/${gh[3]}`; note = 'odkaz github.com/…/blob/ jsem převedl na přímý odkaz raw.githubusercontent.com.'; }
+  const abs = /^https?:\/\//i.test(u);
+  if (u.startsWith('//') || (!abs && !/^[\w\-./%]+$/.test(u))) return { err: 'adresa média musí být odkaz https:// nebo relativní cesta bez mezer (např. media/foto1.jpg).' };
+  const ext = (u.split(/[?#]/)[0].match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+  if (!(kind === 'image' ? /^(jpe?g|png|gif|webp|svg|avif)$/i : /^(wav|mp3|ogg|m4a|aac)$/i).test(ext)) return { err: `nepodporovaná přípona „${ext}“ pro ${kind === 'image' ? 'obrázek (jpg, png, gif, webp, svg, avif)' : 'zvuk (wav, mp3, ogg, m4a, aac)'}.` };
+  return { url: u, note };
+}
 // parser TXT – nic si nedomýšlí, nejasnosti hlásí jako chyby (blokují import) nebo varování
 function parseTxt(txt) {
   const err = [], warn = [], R = []; let r = null, sub = null, cur = null, m;
@@ -43,6 +53,9 @@ function parseTxt(txt) {
     else if ((m = ln.match(/^OT[ÁA]ZKA\s+(\d+)\s*:?\s*$/i))) {
       if (!sub) { err.push(at + 'otázka je mimo podokruh.'); cur = null; } else { cur = { n: +m[1], text: '', ans: null }; sub.qs.push(cur); } }
     else if (/^TIPOVAČKA\s*:?\s*$/i.test(ln)) { cur = { text: '', ans: null }; r.tips.push(cur); sub = null; }
+    else if ((m = ln.match(/^(OBR[ÁA]ZEK|FOTO|ZVUK|AUDIO|WAV|POSLECHOVKA)\s*:\s*(\S.*)$/i))) {   // médium k poslední otázce / tipovačce
+      if (!cur) err.push(at + 'médium bez otázky.'); else if (cur.media) err.push(at + 'otázka má více médií (povoleno jedno).');
+      else { const k = /^(OBR|FOTO)/i.test(m[1]) ? 'image' : 'audio', v = checkMedia(k, m[2].trim()); if (v.err) err.push(at + v.err); else { cur.media = { type: k, url: v.url }; if (v.note) warn.push(at + v.note); } } }
     else if ((m = ln.match(/^(?:SPRÁVNÁ\s+)?ODPOVĚĎ\s*:\s*(.*)$/i))) {
       if (!cur) err.push(at + 'odpověď bez otázky.'); else if (cur.ans !== null) err.push(at + 'otázka má více řádků „ODPOVĚĎ:“.'); else cur.ans = m[1].trim(); }
     else if (cur) { if (cur.ans === null) cur.text += (cur.text ? ' ' : '') + ln; else cur.ans += (cur.ans ? '\n' : '') + ln; }   // odpověď může mít více řádků
@@ -69,4 +82,4 @@ function parseTxt(txt) {
   return { rounds: R, errors: err, warnings: warn };
 }
 const qcount = P => P.rounds.reduce((a, r) => a + r.subs.reduce((b, s) => b + s.qs.length, 0), 0);
-if (typeof module !== 'undefined') module.exports = { num, half, standings, tipCalc, parseTxt, qcount };
+if (typeof module !== 'undefined') module.exports = { num, half, standings, tipCalc, parseTxt, qcount, checkMedia };
