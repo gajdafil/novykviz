@@ -3,6 +3,10 @@ const tn = id => (D.teams.find(t => t.id === id) || {}).display_name || '';
 const subRow = (r, q) => D.qs.filter(x => x.round_number === r && x.kind === 'sub' && x.position <= q.position).sort((a, b) => b.position - a.position)[0];
 const qlist = r => D.qs.filter(x => x.round_number === r && x.kind === 'q').sort((a, b) => a.position - b.position);
 const tipq = r => D.qs.find(x => x.round_number === r && x.kind === 'tip');
+const mediaBox = q => !q || !q.media_url ? '' : q.media_type === 'image'
+  ? `<div class="mb"><img src="${esc(mediaUrl(q.media_url))}" alt=""></div>`
+  : `<div class="mb"><div class="spk">🔊</div><audio id="au" src="${esc(mediaUrl(q.media_url))}" preload="auto"></audio></div>`;
+const qbody = (q, text) => { const t = `<div class="fb q"><div class="big fit">${esc(text)}</div></div>`, mb = mediaBox(q); return mb ? `<div class="qrow">${t}${mb}</div>` : t; };
 const clock = () => '<div id="clk"></div>';
 
 async function load() {
@@ -15,7 +19,7 @@ async function load() {
       if (t.error || s.error || a.error || q.error) throw new Error('db');
       D = { z: zs[0], teams: t.data, scores: s.data, awards: a.data, qs: q.data };
     }
-    draw();
+    draw(); audioCtl();
   } catch (e) { console.error(e); }   // při výpadku zůstává na plátně poslední známý obsah
 }
 function board(list, mode) {
@@ -37,10 +41,10 @@ function html() {
     const l = qlist(r), q = l[z.q_idx]; if (!q) return `<div class="kick">${kick}</div>`;
     const sb = subRow(r, q), grp = l.filter(x => subRow(r, x) === sb);   // číslování otázek v rámci podokruhu
     const ans = z.phase === 'qeval' ? `<div class="fb a">${z.shown_answer ? `<div class="ans fit">${esc(z.shown_answer)}</div>` : ''}</div>` : '';
-    return `<div class="qa"><div class="kick">${kick}${sb ? ' · ' + esc(sb.text) : ''} · Otázka ${grp.indexOf(q) + 1} / ${grp.length}</div><div class="fb q"><div class="big fit">${esc(q.text)}</div></div>${ans}</div>`;
+    return `<div class="qa"><div class="kick">${kick}${sb ? ' · ' + esc(sb.text) : ''} · Otázka ${grp.indexOf(q) + 1} / ${grp.length}</div>${qbody(q, q.text)}${ans}</div>`;
   }
   const tq = tipq(r);
-  if (z.phase === 'tip') return `<div class="qa"><div class="kick">${kick} · TIPOVAČKA</div><div class="fb q"><div class="big fit">${esc(tq ? tq.text : '')}</div></div></div>`;
+  if (z.phase === 'tip') return `<div class="qa"><div class="kick">${kick} · TIPOVAČKA</div>${qbody(tq, tq ? tq.text : '')}</div>`;
   if (z.phase === 'countdown') return `<div class="kick">${kick} · TIPOVAČKA</div><div class="sm" style="margin:0 0 2vh">${esc(tq ? tq.text : '')}</div>${clock()}`;
   if (z.phase === 'tipeval') {
     const v = z.tip_reveal; if (!v) return `<div class="kick">${kick} · TIPOVAČKA</div>`;
@@ -79,3 +83,15 @@ function fit() {
   });
 }
 addEventListener('resize', fit);
+
+// dálkové ovládání zvuku z moderátorské aplikace (příkaz se provede jen jednou; po obnovení stránky se nic samo nepřehraje)
+let lastN, firstCmd = true;
+function audioCtl() {
+  const c = D && D.z.audio_cmd, a = $('#au');
+  if (firstCmd) { firstCmd = false; lastN = c ? c.n : null; return; }
+  if (!a || !c || c.n === lastN) return; lastN = c.n;
+  if (c.a === 'pause') return a.pause();
+  if (c.a === 'restart') a.currentTime = 0;
+  a.play().catch(() => { $('#snd').hidden = false; });   // prohlížeč čeká na první klepnutí
+}
+document.addEventListener('click', () => { $('#snd').hidden = true; const a = $('#au'), c = D && D.z.audio_cmd; if (a && c && c.a !== 'pause') a.play().catch(() => {}); });
