@@ -1,4 +1,6 @@
 const S = { tab: 'sort', authed: false, quiz: null, teams: [], players: [], scores: [], awards: [], qs: [], ans: [], tipAns: [], tipRound: 1, scoreRound: null, last: null, tm: 2, bm: 10, txt: '', parsed: null };
+const mediaPrev = m => !m ? '' : (m.type === 'image' ? `<br><img src="${esc(mediaUrl(m.url))}" style="max-height:90px;max-width:100%;border-radius:6px" alt="">` : `<br><audio controls preload="none" src="${esc(mediaUrl(m.url))}" style="max-width:100%"></audio>`) + `<br><span class="sm">${esc(m.url)}</span>`;
+const aud = a => upd({ audio_cmd: { a, n: Date.now() } });
 const q = async p => { const { data, error } = await p; if (error) throw error; return data; };
 const tname = id => (S.teams.find(t => t.id === id) || {}).display_name || '';
 const qsOf = (r, k) => S.qs.filter(x => x.round_number === r && x.kind === k).sort((a, b) => a.position - b.position);
@@ -72,7 +74,7 @@ const tipCalcFor = r => {
   return rows.length && rows.length === S.teams.length ? tipCalc(Number(rows[0].correct), rows.map(x => ({ id: x.team_id, a: Number(x.answer) }))) : null;
 };
 function target(r, s) {   // veřejná data pro daný krok; správná odpověď jen ve fázích vyhodnocení
-  const o = { stage: 'round', round_no: r, phase: s.phase, q_idx: s.i, shown_answer: null, tip_reveal: null };
+  const o = { stage: 'round', round_no: r, phase: s.phase, q_idx: s.i, shown_answer: null, tip_reveal: null, audio_cmd: null };
   if (s.phase === 'qeval') o.shown_answer = ansOf((qsOf(r, 'q')[s.i] || {}).id) ?? null;
   if (s.phase === 'tipeval') { const c = tipCalcFor(r); o.tip_reveal = { correct: c.correct, rows: c.rows, winners: c.winners }; }
   if (s.phase === 'countdown') Object.assign(o, { timer_state: 'idle', timer_total: Math.round(S.tm * 60) });
@@ -112,11 +114,15 @@ const tickM = () => { const e = $('#mclk'); if (e && S.quiz) e.textContent = mms
 setInterval(tickM, 500);
 function startBreak() { const t = sec(S.bm); if (!(t > 0)) return toast('Zadejte platnou délku přestávky.'); upd({ override: 'break', timer_total: t, timer_end: new Date(now() + t * 1000).toISOString(), timer_state: 'run' }); }
 
-function slideInfo() {   // co je právě na plátně (včetně správné odpovědi – vidí jen moderátor)
-  const z = S.quiz, r = z.round_no, q = qsOf(r, 'q')[z.q_idx]; let t = '', a;
-  if (z.phase === 'q' || z.phase === 'qeval') { t = q ? q.text : ''; a = q ? ansOf(q.id) : undefined; }
-  else if (z.phase === 'tip' || z.phase === 'countdown') { const tq = qsOf(r, 'tip')[0]; t = tq ? tq.text : ''; a = tq ? ansOf(tq.id) : undefined; }
-  return t ? `<div class="qinfo">${esc(t)}${a !== undefined ? `<br><b>Odpověď: ${esc(a)}</b>` : ''}</div>` : '';
+function slideInfo() {   // co je právě na plátně (včetně správné odpovědi a ovládání zvuku – vidí jen moderátor)
+  const z = S.quiz, r = z.round_no; let mq, t = '', a;
+  if (z.phase === 'q' || z.phase === 'qeval') mq = qsOf(r, 'q')[z.q_idx];
+  else if (z.phase === 'tip' || z.phase === 'countdown') mq = qsOf(r, 'tip')[0];
+  if (mq) { t = mq.text; a = ansOf(mq.id); }
+  if (!t) return '';
+  const md = mq.media_type ? `<div class="sm">${mq.media_type === 'image' ? '🖼 Obrázek' : '🔊 Zvuk'}: ${esc(mq.media_url)}</div>` : '';
+  const ctl = mq.media_type === 'audio' && ['q', 'qeval', 'tip'].includes(z.phase) ? '<div class="row2"><button onclick="aud(\'play\')">▶ Přehrát</button><button class="ghost" onclick="aud(\'pause\')">⏸ Pauza</button><button class="ghost" onclick="aud(\'restart\')">⟲ Od začátku</button></div>' : '';
+  return `<div class="qinfo">${esc(t)}${a !== undefined ? `<br><b>Odpověď: ${esc(a)}</b>` : ''}${md}</div>${ctl}`;
 }
 function panel() {
   const z = S.quiz; let h = '<div class="card pn">';
@@ -167,7 +173,7 @@ function importCard() {
     h += P.errors.length ? `<p class="err">Nalezeno ${P.errors.length} chyb(y) – import není možný:</p><ul>${P.errors.map(e => `<li class="err">${esc(e)}</li>`).join('')}</ul>`
       : `<p class="res">Rozpoznáno ${P.rounds.length} kol, ${P.rounds.length * 2} podokruhů, ${qcount(P)} klasických otázek a ${P.rounds.length} tipovaček.</p><button onclick="askImport()">Potvrdit import</button>`;
     if (P.warnings.length) h += `<p><b>Upozornění:</b></p><ul>${P.warnings.map(e => `<li class="sm">${esc(e)}</li>`).join('')}</ul>`;
-    h += P.rounds.map(r => `<p><b>Kolo ${r.n}</b></p>${r.subs.map(s => `<p><i>Podokruh: ${esc(s.title)}</i></p><ol class="sm">${s.qs.map(x => `<li>${esc(x.text)} → <b style="white-space:pre-line">${esc(x.ans ?? '?')}</b></li>`).join('')}</ol>`).join('')}<p class="sm">Tip: ${esc((r.tips[0] || {}).text)} → <b>${esc((r.tips[0] || {}).ans ?? '?')}</b></p>`).join('');
+    h += P.rounds.map(r => `<p><b>Kolo ${r.n}</b></p>${r.subs.map(s => `<p><i>Podokruh: ${esc(s.title)}</i></p><ol class="sm">${s.qs.map(x => `<li>${esc(x.text)} → <b style="white-space:pre-line">${esc(x.ans ?? '?')}</b>${mediaPrev(x.media)}</li>`).join('')}</ol>`).join('')}<p class="sm">Tip: ${esc((r.tips[0] || {}).text)} → <b>${esc((r.tips[0] || {}).ans ?? '?')}</b>${mediaPrev((r.tips[0] || {}).media)}</p>`).join('');
   }
   return h + '</details>';
 }
@@ -183,9 +189,9 @@ function runImport() {
       let pos = 0;
       r.subs.forEach(sb => {
         rows.push({ quiz_id: S.quiz.id, round_number: r.n, kind: 'sub', position: pos + 1, text: sb.title });   // název podokruhu stojí před svou první otázkou
-        sb.qs.forEach(x => { pos++; rows.push({ quiz_id: S.quiz.id, round_number: r.n, kind: 'q', position: pos, text: x.text }); A[key(r.n, 'q', pos)] = x.ans; });
+        sb.qs.forEach(x => { pos++; rows.push({ quiz_id: S.quiz.id, round_number: r.n, kind: 'q', position: pos, text: x.text, ...(x.media ? { media_url: x.media.url, media_type: x.media.type } : {}) }); A[key(r.n, 'q', pos)] = x.ans; });
       });
-      r.tips.forEach(x => { rows.push({ quiz_id: S.quiz.id, round_number: r.n, kind: 'tip', position: 0, text: x.text }); A[key(r.n, 'tip', 0)] = String(num(x.ans)); });
+      r.tips.forEach(x => { rows.push({ quiz_id: S.quiz.id, round_number: r.n, kind: 'tip', position: 0, text: x.text, ...(x.media ? { media_url: x.media.url, media_type: x.media.type } : {}) }); A[key(r.n, 'tip', 0)] = String(num(x.ans)); });
     });
     const ins = await q(db.from('questions').insert(rows).select());
     await q(db.from('answers').insert(ins.filter(x => x.kind !== 'sub').map(x => ({ question_id: x.id, quiz_id: S.quiz.id, answer: A[key(x.round_number, x.kind, x.position)] }))));
